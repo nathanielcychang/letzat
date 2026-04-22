@@ -343,6 +343,8 @@
         <h1>临时聊天</h1>
         <div class="muted">不需要注册。创建会话后分享链接，打开即可加入。</div>
         <div style="height: 14px"></div>
+        <input id="roomNameBox" placeholder="房间名（可选）" />
+        <div style="height: 10px"></div>
         <button id="createBtn">创建会话并进入</button>
       </div>
 
@@ -411,8 +413,14 @@
         return m ? decodeURIComponent(m[1]) : null;
       }
 
-      async function createRoom() {
-        const res = await fetch("/api/rooms", { method: "POST" });
+      async function createRoom(title) {
+        const payload = { title: String(title || "").trim() };
+        const hasTitle = payload.title.length > 0;
+        const res = await fetch("/api/rooms", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(hasTitle ? payload : {}),
+        });
         if (!res.ok) {
           throw new Error("创建失败");
         }
@@ -724,6 +732,7 @@
           if (res.ok) {
             const data = await res.json();
             el("onlineLabel").textContent = String(data.online ?? "-");
+            if (data.title) el("roomTitle").textContent = String(data.title);
           }
         } catch {}
 
@@ -734,6 +743,7 @@
             if (res.ok) {
               const data = await res.json();
               el("onlineLabel").textContent = String(data.online ?? "-");
+              if (data.title) el("roomTitle").textContent = String(data.title);
             }
           } catch {}
         }, 3000);
@@ -743,7 +753,8 @@
         el("createBtn").onclick = async () => {
           el("createBtn").disabled = true;
           try {
-            const data = await createRoom();
+            const title = el("roomNameBox") ? el("roomNameBox").value : "";
+            const data = await createRoom(title);
             window.location.href = data.joinUrl;
           } catch (e) {
             el("createBtn").disabled = false;

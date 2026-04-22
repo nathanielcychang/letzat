@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, Response
+from pydantic import BaseModel
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 
@@ -36,6 +37,7 @@ def _new_join_key() -> str:
 @dataclass
 class Room:
     room_id: str
+    title: str
     join_key_hash: str
     created_at_ms: int
     expires_at_ms: int
@@ -76,12 +78,16 @@ def _db_init_sync() -> None:
             """
             CREATE TABLE IF NOT EXISTS rooms (
               room_id TEXT PRIMARY KEY,
+              title TEXT NOT NULL DEFAULT '临时会话',
               join_key_hash TEXT NOT NULL,
               created_at_ms INTEGER NOT NULL,
               expires_at_ms INTEGER NOT NULL
             );
             """
         )
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(rooms);").fetchall()}
+        if "title" not in cols:
+            conn.execute("ALTER TABLE rooms ADD COLUMN title TEXT NOT NULL DEFAULT '临时会话';")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS messages (
@@ -108,13 +114,13 @@ async def _run_db(fn, *args):
     return await loop.run_in_executor(None, lambda: fn(*args))
 
 
-def _db_try_create_room_sync(room_id: str, join_key_hash: str, created_at_ms: int, expires_at_ms: int) -> bool:
+def _db_try_create_room_sync(room_id: str, title: str, join_key_hash: str, created_at_ms: int, expires_at_ms: int) -> bool:
     conn = _db_connect()
     try:
         try:
             conn.execute(
-                "INSERT INTO rooms(room_id, join_key_hash, created_at_ms, expires_at_ms) VALUES(?,?,?,?)",
-                (room_id, join_key_hash, created_at_ms, expires_at_ms),
+                "INSERT INTO rooms(room_id, title, join_key_hash, created_at_ms, expires_at_ms) VALUES(?,?,?,?,?)",
+                (room_id, title, join_key_hash, created_at_ms, expires_at_ms),
             )
             conn.commit()
             return True
@@ -274,8 +280,20 @@ async def room_page_head(room_id: str) -> Response:
     return Response(status_code=200)
 
 
+class CreateRoomBody(BaseModel):
+    title: Optional[str] = None
+
+
 @app.post("/api/rooms")
-async def create_room(request: Request) -> JSONResponse:
+async def create_room(request: Request, body: Optional[CreateRoomBody] = None) -> JSONResponse:
+    title = ""
+    if body and body.title is not None:
+        title = str(body.title).strip()
+    if not title:
+        title = "临时会话"
+    if len(title) > 30:
+        title = title[:30]
+
     now = _now_ms()
     expires_at = now + ROOM_TTL_MS
 
@@ -287,20 +305,23 @@ async def create_room(request: Request) -> JSONResponse:
         room_id = _new_room_id()
         join_key = _new_join_key()
         join_key_hash = _sha256_hex(join_key)
-        created = await _run_db(_db_try_create_room_sync, room_id, join_key_hash, now, expires_at)
+        created = await _run_db(_db_try_create_room_sync, room_id, title, join_key_hash, now, expires_at)
         if created:
             break
     if not created:
         raise HTTPException(status_code=500, detail="create room failed")
 
     async with _rooms_lock:
-        _rooms[room_id] = Room(room_id=room_id, join_key_hash=join_key_hash, created_at_ms=now, expires_at_ms=expires_at)
+        _rooms[room_id] = Room(
+            room_id=room_id, title=title, join_key_hash=join_key_hash, created_at_ms=now, expires_at_ms=expires_at
+        )
 
     base = str(request.base_url).rstrip("/")
     join_url = f"{base}/r/{room_id}?k={join_key}"
     return JSONResponse(
         {
             "roomId": room_id,
+            "title": title,
             "joinUrl": join_url,
             "expiresAtMs": expires_at,
         }
@@ -321,6 +342,7 @@ async def get_room(room_id: str) -> JSONResponse:
     return JSONResponse(
         {
             "roomId": record["room_id"],
+            "title": record.get("title") or "临时会话",
             "createdAtMs": int(record["created_at_ms"]),
             "expiresAtMs": int(record["expires_at_ms"]),
             "online": online,
@@ -467,6 +489,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
         if not room:
             room = Room(
                 room_id=room_id,
+                title=str(record.get("title") or "临时会话"),
                 join_key_hash=str(record["join_key_hash"]),
                 created_at_ms=int(record["created_at_ms"]),
                 expires_at_ms=int(record["expires_at_ms"]),
