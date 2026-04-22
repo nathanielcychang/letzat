@@ -348,6 +348,21 @@
         padding: 14px;
         box-sizing: border-box;
       }
+      .wx-imgviewer-close {
+        position: absolute;
+        top: calc(10px + env(safe-area-inset-top));
+        right: 10px;
+        width: 40px;
+        height: 40px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        background: rgba(0, 0, 0, 0.35);
+        color: rgba(255, 255, 255, 0.92);
+        font-size: 22px;
+        line-height: 38px;
+        text-align: center;
+        padding: 0;
+      }
       .wx-imgviewer img {
         max-width: 100%;
         max-height: 100%;
@@ -407,6 +422,7 @@
     </div>
 
     <div id="imgViewer" class="hidden wx-imgviewer" role="dialog" aria-modal="true">
+      <button id="imgViewerClose" class="wx-imgviewer-close" type="button" aria-label="关闭">×</button>
       <img id="imgViewerImg" alt="图片预览" />
     </div>
 
@@ -797,6 +813,7 @@
       async function init() {
         el("imgViewer").addEventListener("click", closeImageViewer);
         el("imgViewerImg").addEventListener("click", (e) => e.stopPropagation());
+        el("imgViewerClose").addEventListener("click", closeImageViewer);
         window.addEventListener("keydown", (e) => {
           if (e.key === "Escape") closeImageViewer();
         });
