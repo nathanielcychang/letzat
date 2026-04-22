@@ -318,10 +318,12 @@ async def create_room(request: Request, body: Optional[CreateRoomBody] = None) -
 
     base = str(request.base_url).rstrip("/")
     join_url = f"{base}/r/{room_id}?k={join_key}"
+    join_path = f"/r/{room_id}?k={join_key}"
     return JSONResponse(
         {
             "roomId": room_id,
             "title": title,
+            "joinPath": join_path,
             "joinUrl": join_url,
             "expiresAtMs": expires_at,
         }

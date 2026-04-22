@@ -458,13 +458,27 @@
       async function createRoom(title) {
         const payload = { title: String(title || "").trim() };
         const hasTitle = payload.title.length > 0;
-        const res = await fetch("/api/rooms", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(hasTitle ? payload : {}),
-        });
+        let res = null;
+        try {
+          res = await fetch("/api/rooms", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(hasTitle ? payload : {}),
+          });
+        } catch {
+          throw new Error("连接失败，请检查服务器地址/端口是否可访问");
+        }
         if (!res.ok) {
-          throw new Error("创建失败");
+          let detail = "";
+          try {
+            const j = await res.json();
+            detail = j && j.detail ? String(j.detail) : "";
+          } catch {
+            try {
+              detail = (await res.text()) || "";
+            } catch {}
+          }
+          throw new Error(detail ? `创建失败：${detail}` : "创建失败");
         }
         return await res.json();
       }
@@ -823,7 +837,7 @@
           try {
             const title = el("roomNameBox") ? el("roomNameBox").value : "";
             const data = await createRoom(title);
-            window.location.href = data.joinUrl;
+            window.location.href = data.joinPath || data.joinUrl;
           } catch (e) {
             el("createBtn").disabled = false;
             alert(String(e && e.message ? e.message : "创建失败"));
