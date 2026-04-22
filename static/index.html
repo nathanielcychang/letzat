@@ -444,6 +444,37 @@
         el("statusLine").textContent = text;
       }
 
+      async function copyText(text) {
+        const value = String(text || "");
+        if (!value) return false;
+
+        try {
+          if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(value);
+            return true;
+          }
+        } catch {}
+
+        try {
+          const ta = document.createElement("textarea");
+          ta.value = value;
+          ta.setAttribute("readonly", "true");
+          ta.style.position = "fixed";
+          ta.style.top = "-1000px";
+          ta.style.left = "-1000px";
+          ta.style.opacity = "0";
+          document.body.appendChild(ta);
+          ta.focus();
+          ta.select();
+          ta.setSelectionRange(0, ta.value.length);
+          const ok = document.execCommand && document.execCommand("copy");
+          document.body.removeChild(ta);
+          return !!ok;
+        } catch {}
+
+        return false;
+      }
+
       function scrollToBottom() {
         const scrollArea = el("scrollArea");
         if (!scrollArea) return;
@@ -656,9 +687,15 @@
         });
 
         el("copyLinkBtn").onclick = async () => {
-          try {
-            await navigator.clipboard.writeText(window.location.href);
+          const url = window.location.href;
+          const ok = await copyText(url);
+          if (ok) {
             setStatus("已复制链接");
+            return;
+          }
+          try {
+            window.prompt("复制下面的链接（长按全选复制）", url);
+            setStatus("请长按复制链接");
           } catch {
             setStatus("复制失败，请手动复制地址栏链接");
           }
