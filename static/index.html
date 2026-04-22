@@ -1,0 +1,738 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>临时聊天</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --wx-bg: #0b0d10;
+        --wx-fg: #e8e8e8;
+        --wx-muted: #a6a6a6;
+        --wx-border: #2a333d;
+        --wx-panel: #12161c;
+        --wx-accent: #4aa3ff;
+        --wx-danger: #ff5b5b;
+        --wx-bubble-me: #2f8cff;
+        --wx-bubble-other: #1a2028;
+        --wx-input: #0f1318;
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          --wx-bg: #ededed;
+          --wx-fg: #111315;
+          --wx-muted: #6b7280;
+          --wx-border: #e5e7eb;
+          --wx-panel: #ffffff;
+          --wx-accent: #07c160;
+          --wx-danger: #c62828;
+          --wx-bubble-me: #95ec69;
+          --wx-bubble-other: #ffffff;
+          --wx-input: #f7f7f7;
+        }
+      }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, "PingFang SC",
+          "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+        background: var(--wx-bg);
+        color: var(--wx-fg);
+      }
+      .wrap {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 16px 14px 20px;
+      }
+      .card {
+        background: var(--wx-panel);
+        border: 1px solid var(--wx-border);
+        border-radius: 12px;
+        padding: 14px;
+      }
+      .row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+      .row > * {
+        flex: 1 1 auto;
+      }
+      button {
+        border: 1px solid var(--wx-border);
+        background: var(--wx-accent);
+        color: white;
+        padding: 10px 12px;
+        border-radius: 10px;
+        font-size: 16px;
+        font-weight: 600;
+      }
+      button.secondary {
+        background: transparent;
+        color: var(--wx-fg);
+      }
+      button.danger {
+        background: var(--wx-danger);
+        border-color: var(--wx-danger);
+      }
+      input,
+      textarea {
+        width: 100%;
+        box-sizing: border-box;
+        border: 1px solid var(--wx-border);
+        background: transparent;
+        color: var(--wx-fg);
+        padding: 10px 12px;
+        border-radius: 10px;
+        font-size: 16px;
+      }
+      textarea {
+        resize: none;
+        height: 44px;
+        line-height: 22px;
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0 0 10px 0;
+      }
+      .muted {
+        color: var(--wx-muted);
+        font-size: 13px;
+      }
+      .hidden {
+        display: none !important;
+      }
+
+      #roomView {
+        padding: 0;
+      }
+
+      .wx-app {
+        height: 100vh;
+        height: 100dvh;
+        display: flex;
+        flex-direction: column;
+        background: var(--wx-bg);
+      }
+      .wx-header {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        padding: 10px 12px 8px;
+        background: var(--wx-input);
+        border-bottom: 1px solid var(--wx-border);
+      }
+      .wx-header-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .wx-title {
+        font-weight: 700;
+        font-size: 16px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .wx-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .wx-actions button {
+        padding: 8px 10px;
+        font-size: 14px;
+        border-radius: 10px;
+      }
+      .wx-sub {
+        margin-top: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        color: var(--wx-muted);
+        font-size: 12px;
+      }
+      .wx-sub code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 12px;
+        color: var(--wx-fg);
+      }
+
+      .wx-scroll {
+        flex: 1 1 auto;
+        overflow: auto;
+        -webkit-overflow-scrolling: touch;
+        padding: 12px 10px 6px;
+      }
+      .wx-messages {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .wx-tip {
+        align-self: center;
+        max-width: 80%;
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--wx-border) 60%, transparent);
+        color: var(--wx-muted);
+        font-size: 12px;
+      }
+
+      .wx-row {
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+      }
+      .wx-row.wx-self {
+        flex-direction: row-reverse;
+      }
+      .wx-avatar {
+        width: 36px;
+        height: 36px;
+        border-radius: 8px;
+        flex: 0 0 auto;
+        background: color-mix(in srgb, var(--wx-accent) 30%, var(--wx-panel));
+        border: 1px solid var(--wx-border);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 800;
+        font-size: 13px;
+        color: var(--wx-fg);
+        user-select: none;
+      }
+      .wx-bubble-wrap {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+        max-width: 76%;
+      }
+      .wx-meta {
+        display: flex;
+        gap: 8px;
+        align-items: baseline;
+        color: var(--wx-muted);
+        font-size: 12px;
+      }
+      .wx-row.wx-self .wx-meta {
+        justify-content: flex-end;
+      }
+      .wx-meta .wx-name {
+        color: var(--wx-muted);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-width: 52vw;
+      }
+      .wx-bubble {
+        position: relative;
+        padding: 10px 12px;
+        border-radius: 10px;
+        line-height: 1.4;
+        white-space: pre-wrap;
+        word-break: break-word;
+        border: 1px solid var(--wx-border);
+      }
+      .wx-img {
+        display: block;
+        max-width: 56vw;
+        max-height: 44vh;
+        width: auto;
+        height: auto;
+        border-radius: 10px;
+        border: 1px solid var(--wx-border);
+        background: var(--wx-panel);
+      }
+      .wx-row.wx-other .wx-bubble {
+        background: var(--wx-bubble-other);
+      }
+      .wx-row.wx-self .wx-bubble {
+        background: var(--wx-bubble-me);
+        color: color-mix(in srgb, #000 70%, var(--wx-fg));
+      }
+      .wx-row.wx-other .wx-bubble::before {
+        content: "";
+        position: absolute;
+        left: -6px;
+        top: 14px;
+        width: 10px;
+        height: 10px;
+        background: var(--wx-bubble-other);
+        border-left: 1px solid var(--wx-border);
+        border-bottom: 1px solid var(--wx-border);
+        transform: rotate(45deg);
+      }
+      .wx-row.wx-self .wx-bubble::before {
+        content: "";
+        position: absolute;
+        right: -6px;
+        top: 14px;
+        width: 10px;
+        height: 10px;
+        background: var(--wx-bubble-me);
+        border-right: 1px solid var(--wx-border);
+        border-top: 1px solid var(--wx-border);
+        transform: rotate(45deg);
+      }
+
+      .wx-composer {
+        position: sticky;
+        bottom: 0;
+        z-index: 10;
+        padding: 10px 10px calc(10px + env(safe-area-inset-bottom));
+        background: var(--wx-input);
+        border-top: 1px solid var(--wx-border);
+      }
+      .wx-composer-row {
+        display: flex;
+        gap: 8px;
+        align-items: flex-end;
+      }
+      .wx-iconbtn {
+        flex: 0 0 auto;
+        width: 40px;
+        height: 40px;
+        padding: 0;
+        border-radius: 8px;
+        font-size: 20px;
+        line-height: 40px;
+        text-align: center;
+      }
+      .wx-composer-row textarea {
+        flex: 1 1 auto;
+        height: 40px;
+        padding: 8px 10px;
+        border-radius: 8px;
+        background: var(--wx-panel);
+      }
+      .wx-composer-row button {
+        flex: 0 0 auto;
+        width: 76px;
+        height: 40px;
+        padding: 0 10px;
+        border-radius: 8px;
+        font-size: 15px;
+      }
+      .wx-composer-sub {
+        margin-top: 8px;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .wx-composer-sub input {
+        height: 36px;
+        padding: 8px 10px;
+        border-radius: 8px;
+        background: var(--wx-panel);
+      }
+      .wx-composer-sub button {
+        height: 36px;
+        padding: 0 10px;
+        border-radius: 8px;
+        font-size: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div id="homeView" class="card">
+        <h1>临时聊天</h1>
+        <div class="muted">不需要注册。创建会话后分享链接，打开即可加入。</div>
+        <div style="height: 14px"></div>
+        <button id="createBtn">创建会话并进入</button>
+      </div>
+
+      <div id="roomView" class="hidden">
+        <div class="wx-app">
+          <div class="wx-header">
+            <div class="wx-header-row">
+              <div class="wx-title" id="roomTitle">聊天</div>
+              <div class="wx-actions">
+                <button id="copyLinkBtn" class="secondary">复制链接</button>
+              </div>
+            </div>
+            <div class="wx-sub">
+              <div>房间 <code id="roomIdLabel"></code></div>
+              <div>在线 <code id="onlineLabel">-</code></div>
+            </div>
+            <div id="statusLine" class="muted" style="margin-top: 6px"></div>
+          </div>
+
+          <div id="scrollArea" class="wx-scroll">
+            <div id="messages" class="wx-messages"></div>
+          </div>
+
+          <div class="wx-composer">
+            <div class="wx-composer-row">
+              <button id="imageBtn" class="secondary wx-iconbtn" type="button">＋</button>
+              <input id="imageInput" class="hidden" type="file" accept="image/*" />
+              <textarea id="inputBox" placeholder="输入消息，回车发送"></textarea>
+              <button id="sendBtn">发送</button>
+            </div>
+            <div class="wx-composer-sub">
+              <input id="nameBox" placeholder="你的昵称（可选）" />
+              <button id="reconnectBtn" class="secondary">重连</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const el = (id) => document.getElementById(id);
+
+      function escapeText(s) {
+        return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+      }
+
+      function fmtTime(ts) {
+        const d = new Date(ts);
+        const hh = String(d.getHours()).padStart(2, "0");
+        const mm = String(d.getMinutes()).padStart(2, "0");
+        return `${hh}:${mm}`;
+      }
+
+      function getOrCreateClientId() {
+        const key = "tempchat_client_id";
+        let v = localStorage.getItem(key);
+        if (!v) {
+          v = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}_${Math.random()}`).replace(/-/g, "");
+          localStorage.setItem(key, v);
+        }
+        return v;
+      }
+
+      function parseRoomFromPath() {
+        const m = window.location.pathname.match(/^\/r\/([^/]+)$/);
+        return m ? decodeURIComponent(m[1]) : null;
+      }
+
+      async function createRoom() {
+        const res = await fetch("/api/rooms", { method: "POST" });
+        if (!res.ok) {
+          throw new Error("创建失败");
+        }
+        return await res.json();
+      }
+
+      let ws = null;
+      let roomId = null;
+      let joinKey = null;
+      let reconnectTimer = null;
+      const myClientId = getOrCreateClientId();
+
+      function getOrCreateDisplayName() {
+        const key = "tempchat_display_name";
+        let v = localStorage.getItem(key);
+        if (!v) {
+          v = `用户${myClientId.slice(0, 4)}`;
+          localStorage.setItem(key, v);
+        }
+        return v;
+      }
+
+      function getCurrentDisplayName() {
+        const typed = (el("nameBox")?.value || "").trim();
+        return typed ? typed : getOrCreateDisplayName();
+      }
+
+      function setStatus(text) {
+        el("statusLine").textContent = text;
+      }
+
+      function scrollToBottom() {
+        const scrollArea = el("scrollArea");
+        if (!scrollArea) return;
+        scrollArea.scrollTop = scrollArea.scrollHeight;
+      }
+
+      function displayNameFor(msg) {
+        if (msg.senderName) return msg.senderName;
+        if (msg.senderId) return msg.senderId.slice(0, 6);
+        return "匿名";
+      }
+
+      function avatarTextFor(name) {
+        const s = String(name || "").trim();
+        if (!s) return "你";
+        return s.slice(0, 1).toUpperCase();
+      }
+
+      function addMessage(msg) {
+        const isSelf = msg.senderId && msg.senderId === myClientId;
+        const row = document.createElement("div");
+        row.className = `wx-row ${isSelf ? "wx-self" : "wx-other"}`;
+
+        const name = displayNameFor(msg);
+        const avatar = document.createElement("div");
+        avatar.className = "wx-avatar";
+        avatar.textContent = avatarTextFor(isSelf ? getCurrentDisplayName() : name);
+
+        const bubbleWrap = document.createElement("div");
+        bubbleWrap.className = "wx-bubble-wrap";
+        const meta = document.createElement("div");
+        meta.className = "wx-meta";
+        const nameEl = document.createElement("div");
+        nameEl.className = "wx-name";
+        nameEl.textContent = name;
+        const timeEl = document.createElement("div");
+        timeEl.className = "wx-time";
+        timeEl.textContent = fmtTime(msg.ts || Date.now());
+        meta.appendChild(nameEl);
+        meta.appendChild(timeEl);
+
+        const bubble = document.createElement("div");
+        bubble.className = "wx-bubble";
+        const kind = String(msg.kind || "text").toLowerCase();
+        if (kind === "image" && msg.url) {
+          const img = document.createElement("img");
+          img.className = "wx-img";
+          img.loading = "lazy";
+          img.alt = "图片";
+          img.src = String(msg.url);
+          bubble.appendChild(img);
+        } else {
+          bubble.textContent = String(msg.content || "");
+        }
+
+        bubbleWrap.appendChild(meta);
+        bubbleWrap.appendChild(bubble);
+
+        row.appendChild(avatar);
+        row.appendChild(bubbleWrap);
+        el("messages").appendChild(row);
+        scrollToBottom();
+      }
+
+      function addPresence(p) {
+        const action = p.event === "join" ? "加入" : "离开";
+        const tip = document.createElement("div");
+        tip.className = "wx-tip";
+        tip.textContent = `${(p.clientId || "").slice(0, 6)} ${action} · ${fmtTime(p.ts || Date.now())}`;
+        el("messages").appendChild(tip);
+        scrollToBottom();
+      }
+
+      function buildWsUrl() {
+        const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+        const params = new URLSearchParams();
+        params.set("roomId", roomId);
+        params.set("k", joinKey);
+        params.set("clientId", myClientId);
+        return `${scheme}://${window.location.host}/ws?${params.toString()}`;
+      }
+
+      function connectWs() {
+        if (!roomId || !joinKey) return;
+        if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+
+        setStatus("连接中…");
+        ws = new WebSocket(buildWsUrl());
+
+        ws.onopen = () => {
+          setStatus("已连接");
+        };
+
+        ws.onclose = () => {
+          setStatus("已断开，自动重连中…");
+          if (reconnectTimer) clearTimeout(reconnectTimer);
+          reconnectTimer = setTimeout(connectWs, 800);
+        };
+
+        ws.onerror = () => {};
+
+        ws.onmessage = (ev) => {
+          let data = null;
+          try {
+            data = JSON.parse(ev.data);
+          } catch {
+            return;
+          }
+          if (!data || typeof data !== "object") return;
+
+          if (data.type === "joined") {
+            el("messages").innerHTML = "";
+            const history = Array.isArray(data.history) ? data.history : [];
+            for (const m of history) addMessage(m);
+            scrollToBottom();
+            return;
+          }
+          if (data.type === "message") {
+            addMessage(data);
+            return;
+          }
+          if (data.type === "presence") {
+            addPresence(data);
+            return;
+          }
+        };
+      }
+
+      function sendMessage() {
+        const content = el("inputBox").value.trim();
+        if (!content) return;
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+          setStatus("未连接，正在重连…");
+          connectWs();
+          return;
+        }
+        const payload = {
+          type: "message",
+          kind: "text",
+          content,
+          senderName: getCurrentDisplayName(),
+        };
+        ws.send(JSON.stringify(payload));
+        el("inputBox").value = "";
+      }
+
+      async function uploadImage(file) {
+        const form = new FormData();
+        form.append("file", file);
+        const res = await fetch(`/api/rooms/${encodeURIComponent(roomId)}/images?k=${encodeURIComponent(joinKey)}`, {
+          method: "POST",
+          body: form,
+        });
+        if (!res.ok) {
+          throw new Error("上传失败");
+        }
+        return await res.json();
+      }
+
+      async function pickAndSendImage() {
+        const input = el("imageInput");
+        if (!input) return;
+        input.value = "";
+        input.click();
+      }
+
+      async function handleImageSelected() {
+        const input = el("imageInput");
+        if (!input || !input.files || input.files.length === 0) return;
+        const file = input.files[0];
+        if (!file) return;
+        if (!file.type || !file.type.startsWith("image/")) {
+          setStatus("请选择图片文件");
+          return;
+        }
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+          setStatus("未连接，正在重连…");
+          connectWs();
+          return;
+        }
+        try {
+          setStatus("图片上传中…");
+          el("imageBtn").disabled = true;
+          const data = await uploadImage(file);
+          const payload = {
+            type: "message",
+            kind: "image",
+            url: data.url,
+            senderName: getCurrentDisplayName(),
+          };
+          ws.send(JSON.stringify(payload));
+          setStatus("已发送图片");
+        } catch (e) {
+          setStatus(String(e && e.message ? e.message : "上传失败"));
+        } finally {
+          el("imageBtn").disabled = false;
+        }
+      }
+
+      async function initRoomView() {
+        el("homeView").classList.add("hidden");
+        el("roomView").classList.remove("hidden");
+        el("roomIdLabel").textContent = roomId;
+        el("roomTitle").textContent = "临时会话";
+
+        el("nameBox").value = getOrCreateDisplayName();
+        el("nameBox").addEventListener("change", () => {
+          const v = (el("nameBox").value || "").trim();
+          if (v) localStorage.setItem("tempchat_display_name", v);
+        });
+
+        el("copyLinkBtn").onclick = async () => {
+          try {
+            await navigator.clipboard.writeText(window.location.href);
+            setStatus("已复制链接");
+          } catch {
+            setStatus("复制失败，请手动复制地址栏链接");
+          }
+        };
+
+        el("imageBtn").onclick = pickAndSendImage;
+        el("imageInput").addEventListener("change", handleImageSelected);
+
+        el("sendBtn").onclick = sendMessage;
+        el("reconnectBtn").onclick = () => {
+          try {
+            if (ws) ws.close();
+          } catch {}
+          connectWs();
+        };
+
+        el("inputBox").addEventListener("keydown", (e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage();
+          }
+        });
+
+        try {
+          const res = await fetch(`/api/rooms/${encodeURIComponent(roomId)}`);
+          if (res.ok) {
+            const data = await res.json();
+            el("onlineLabel").textContent = String(data.online ?? "-");
+          }
+        } catch {}
+
+        connectWs();
+        setInterval(async () => {
+          try {
+            const res = await fetch(`/api/rooms/${encodeURIComponent(roomId)}`);
+            if (res.ok) {
+              const data = await res.json();
+              el("onlineLabel").textContent = String(data.online ?? "-");
+            }
+          } catch {}
+        }, 3000);
+      }
+
+      async function init() {
+        el("createBtn").onclick = async () => {
+          el("createBtn").disabled = true;
+          try {
+            const data = await createRoom();
+            window.location.href = data.joinUrl;
+          } catch (e) {
+            el("createBtn").disabled = false;
+            alert(String(e && e.message ? e.message : "创建失败"));
+          }
+        };
+
+        const r = parseRoomFromPath();
+        if (!r) return;
+
+        const k = new URLSearchParams(window.location.search).get("k");
+        if (!k) {
+          el("homeView").classList.add("hidden");
+          el("roomView").classList.remove("hidden");
+          el("roomTitle").textContent = "链接无效";
+          setStatus("缺少 k 参数，请使用创建者分享的完整链接");
+          el("sendBtn").disabled = true;
+          return;
+        }
+
+        roomId = r;
+        joinKey = k;
+        await initRoomView();
+      }
+
+      init();
+    </script>
+  </body>
+</html>
