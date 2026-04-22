@@ -246,6 +246,7 @@
         border-radius: 10px;
         border: 1px solid var(--wx-border);
         background: var(--wx-panel);
+        cursor: zoom-in;
       }
       .wx-row.wx-other .wx-bubble {
         background: var(--wx-bubble-other);
@@ -335,6 +336,27 @@
         border-radius: 8px;
         font-size: 14px;
       }
+
+      .wx-imgviewer {
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        background: rgba(0, 0, 0, 0.92);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 14px;
+        box-sizing: border-box;
+      }
+      .wx-imgviewer img {
+        max-width: 100%;
+        max-height: 100%;
+        width: auto;
+        height: auto;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(0, 0, 0, 0.2);
+      }
     </style>
   </head>
   <body>
@@ -382,6 +404,10 @@
           </div>
         </div>
       </div>
+    </div>
+
+    <div id="imgViewer" class="hidden wx-imgviewer" role="dialog" aria-modal="true">
+      <img id="imgViewerImg" alt="图片预览" />
     </div>
 
     <script>
@@ -501,6 +527,24 @@
         return s.slice(0, 1).toUpperCase();
       }
 
+      function openImageViewer(url) {
+        const viewer = el("imgViewer");
+        const img = el("imgViewerImg");
+        if (!viewer || !img) return;
+        img.src = String(url || "");
+        viewer.classList.remove("hidden");
+        document.body.style.overflow = "hidden";
+      }
+
+      function closeImageViewer() {
+        const viewer = el("imgViewer");
+        const img = el("imgViewerImg");
+        if (!viewer || !img) return;
+        viewer.classList.add("hidden");
+        img.src = "";
+        document.body.style.overflow = "";
+      }
+
       function addMessage(msg) {
         const isSelf = msg.senderId && msg.senderId === myClientId;
         const row = document.createElement("div");
@@ -533,6 +577,7 @@
           img.loading = "lazy";
           img.alt = "图片";
           img.src = String(msg.url);
+          img.addEventListener("click", () => openImageViewer(img.src));
           bubble.appendChild(img);
         } else {
           bubble.textContent = String(msg.content || "");
@@ -750,6 +795,12 @@
       }
 
       async function init() {
+        el("imgViewer").addEventListener("click", closeImageViewer);
+        el("imgViewerImg").addEventListener("click", (e) => e.stopPropagation());
+        window.addEventListener("keydown", (e) => {
+          if (e.key === "Escape") closeImageViewer();
+        });
+
         el("createBtn").onclick = async () => {
           el("createBtn").disabled = true;
           try {
