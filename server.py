@@ -81,13 +81,16 @@ def _db_init_sync() -> None:
               title TEXT NOT NULL DEFAULT '临时会话',
               join_key_hash TEXT NOT NULL,
               created_at_ms INTEGER NOT NULL,
-              expires_at_ms INTEGER NOT NULL
+              expires_at_ms INTEGER NOT NULL,
+              cleaned_at_ms INTEGER NOT NULL DEFAULT 0
             );
             """
         )
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(rooms);").fetchall()}
         if "title" not in cols:
             conn.execute("ALTER TABLE rooms ADD COLUMN title TEXT NOT NULL DEFAULT '临时会话';")
+        if "cleaned_at_ms" not in cols:
+            conn.execute("ALTER TABLE rooms ADD COLUMN cleaned_at_ms INTEGER NOT NULL DEFAULT 0;")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS messages (
@@ -211,11 +214,32 @@ def _db_get_expired_room_ids_sync(now_ms: int) -> List[str]:
         conn.close()
 
 
+def _db_get_rooms_needing_cleanup_sync(now_ms: int) -> List[str]:
+    conn = _db_connect()
+    try:
+        rows = conn.execute(
+            "SELECT room_id FROM rooms WHERE expires_at_ms <= ? AND cleaned_at_ms = 0",
+            (now_ms,),
+        ).fetchall()
+        return [r["room_id"] for r in rows]
+    finally:
+        conn.close()
+
+
+def _db_mark_room_cleaned_sync(room_id: str, cleaned_at_ms: int) -> None:
+    conn = _db_connect()
+    try:
+        conn.execute("UPDATE rooms SET cleaned_at_ms = ? WHERE room_id = ?", (int(cleaned_at_ms), room_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _db_list_rooms_sync(limit: int) -> List[Dict[str, Any]]:
     conn = _db_connect()
     try:
         rows = conn.execute(
-            "SELECT room_id, title, created_at_ms, expires_at_ms FROM rooms ORDER BY created_at_ms DESC LIMIT ?",
+            "SELECT room_id, title, created_at_ms, expires_at_ms, cleaned_at_ms FROM rooms ORDER BY created_at_ms DESC LIMIT ?",
             (int(limit),),
         ).fetchall()
         return [dict(r) for r in rows]
@@ -237,7 +261,7 @@ async def _cleanup_loop() -> None:
     while True:
         await asyncio.sleep(30)
         now_ms = _now_ms()
-        expired_from_db = await _run_db(_db_get_expired_room_ids_sync, now_ms)
+        expired_from_db = await _run_db(_db_get_rooms_needing_cleanup_sync, now_ms)
         for rid in expired_from_db:
             async with _rooms_lock:
                 room = _rooms.pop(rid, None)
@@ -251,23 +275,7 @@ async def _cleanup_loop() -> None:
                 shutil.rmtree(_UPLOAD_DIR / rid, ignore_errors=True)
             except Exception:
                 pass
-            await _run_db(_db_delete_room_sync, rid)
-        async with _rooms_lock:
-            expired_ids = [rid for rid, room in _rooms.items() if room.is_expired()]
-            for rid in expired_ids:
-                room = _rooms.pop(rid, None)
-                if not room:
-                    continue
-                for ws in list(room.connections):
-                    try:
-                        await ws.close(code=4000)
-                    except Exception:
-                        pass
-                try:
-                    shutil.rmtree(_UPLOAD_DIR / rid, ignore_errors=True)
-                except Exception:
-                    pass
-                await _run_db(_db_delete_room_sync, rid)
+            await _run_db(_db_mark_room_cleaned_sync, rid, now_ms)
 
 
 @app.on_event("startup")
