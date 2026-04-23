@@ -58,7 +58,18 @@ _APP_HTML = _STATIC_DIR / "index.html"
 _UPLOAD_DIR = Path(__file__).parent / "uploads"
 _DB_PATH = Path(__file__).parent / "chat.db"
 
-ROOM_TTL_MS = 24 * 60 * 60 * 1000
+
+def _int_env(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(str(raw).strip())
+    except Exception:
+        return default
+
+
+ROOM_TTL_MS = _int_env("ROOM_TTL_MS", 365 * 24 * 60 * 60 * 1000)
 MAX_MESSAGE_LEN = 2000
 MAX_HISTORY = 200
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
@@ -79,6 +90,7 @@ def _db_init_sync() -> None:
             CREATE TABLE IF NOT EXISTS rooms (
               room_id TEXT PRIMARY KEY,
               title TEXT NOT NULL DEFAULT '临时会话',
+              join_key_plain TEXT NOT NULL DEFAULT '',
               join_key_hash TEXT NOT NULL,
               created_at_ms INTEGER NOT NULL,
               expires_at_ms INTEGER NOT NULL,
@@ -89,6 +101,8 @@ def _db_init_sync() -> None:
         cols = {r["name"] for r in conn.execute("PRAGMA table_info(rooms);").fetchall()}
         if "title" not in cols:
             conn.execute("ALTER TABLE rooms ADD COLUMN title TEXT NOT NULL DEFAULT '临时会话';")
+        if "join_key_plain" not in cols:
+            conn.execute("ALTER TABLE rooms ADD COLUMN join_key_plain TEXT NOT NULL DEFAULT '';")
         if "cleaned_at_ms" not in cols:
             conn.execute("ALTER TABLE rooms ADD COLUMN cleaned_at_ms INTEGER NOT NULL DEFAULT 0;")
         conn.execute(
@@ -117,13 +131,15 @@ async def _run_db(fn, *args):
     return await loop.run_in_executor(None, lambda: fn(*args))
 
 
-def _db_try_create_room_sync(room_id: str, title: str, join_key_hash: str, created_at_ms: int, expires_at_ms: int) -> bool:
+def _db_try_create_room_sync(
+    room_id: str, title: str, join_key_plain: str, join_key_hash: str, created_at_ms: int, expires_at_ms: int
+) -> bool:
     conn = _db_connect()
     try:
         try:
             conn.execute(
-                "INSERT INTO rooms(room_id, title, join_key_hash, created_at_ms, expires_at_ms) VALUES(?,?,?,?,?)",
-                (room_id, title, join_key_hash, created_at_ms, expires_at_ms),
+                "INSERT INTO rooms(room_id, title, join_key_plain, join_key_hash, created_at_ms, expires_at_ms) VALUES(?,?,?,?,?,?)",
+                (room_id, title, join_key_plain, join_key_hash, created_at_ms, expires_at_ms),
             )
             conn.commit()
             return True
@@ -239,7 +255,7 @@ def _db_list_rooms_sync(limit: int) -> List[Dict[str, Any]]:
     conn = _db_connect()
     try:
         rows = conn.execute(
-            "SELECT room_id, title, created_at_ms, expires_at_ms, cleaned_at_ms FROM rooms ORDER BY created_at_ms DESC LIMIT ?",
+            "SELECT room_id, title, join_key_plain, created_at_ms, expires_at_ms, cleaned_at_ms FROM rooms ORDER BY created_at_ms DESC LIMIT ?",
             (int(limit),),
         ).fetchall()
         return [dict(r) for r in rows]
@@ -251,6 +267,28 @@ def _db_update_room_title_sync(room_id: str, title: str) -> bool:
     conn = _db_connect()
     try:
         cur = conn.execute("UPDATE rooms SET title = ? WHERE room_id = ?", (title, room_id))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def _db_bump_room_expiry_sync(room_id: str, new_expires_at_ms: int) -> None:
+    conn = _db_connect()
+    try:
+        conn.execute("UPDATE rooms SET expires_at_ms = ? WHERE room_id = ?", (int(new_expires_at_ms), room_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _db_set_room_join_key_sync(room_id: str, join_key_plain: str, join_key_hash: str) -> bool:
+    conn = _db_connect()
+    try:
+        cur = conn.execute(
+            "UPDATE rooms SET join_key_plain = ?, join_key_hash = ? WHERE room_id = ?",
+            (join_key_plain, join_key_hash, room_id),
+        )
         conn.commit()
         return cur.rowcount > 0
     finally:
@@ -347,7 +385,7 @@ async def create_room(request: Request, body: Optional[CreateRoomBody] = None) -
         room_id = _new_room_id()
         join_key = _new_join_key()
         join_key_hash = _sha256_hex(join_key)
-        created = await _run_db(_db_try_create_room_sync, room_id, title, join_key_hash, now, expires_at)
+        created = await _run_db(_db_try_create_room_sync, room_id, title, join_key, join_key_hash, now, expires_at)
         if created:
             break
     if not created:
@@ -414,12 +452,15 @@ async def admin_list_rooms(request: Request, limit: int = 200) -> JSONResponse:
     if limit > 1000:
         limit = 1000
     rooms = await _run_db(_db_list_rooms_sync, limit)
+    base = str(request.base_url).rstrip("/")
     now = _now_ms()
     async with _rooms_lock:
         online_map = {rid: len(r.connections) for rid, r in _rooms.items()}
     out: List[Dict[str, Any]] = []
     for r in rooms:
         rid = str(r.get("room_id") or "")
+        join_key_plain = str(r.get("join_key_plain") or "").strip()
+        join_path = f"/r/{rid}?k={join_key_plain}" if join_key_plain else None
         expires = int(r.get("expires_at_ms") or 0)
         out.append(
             {
@@ -429,9 +470,35 @@ async def admin_list_rooms(request: Request, limit: int = 200) -> JSONResponse:
                 "expiresAtMs": expires,
                 "expired": now >= expires if expires else False,
                 "online": int(online_map.get(rid) or 0),
+                "joinPath": join_path,
+                "joinUrl": f"{base}{join_path}" if join_path else None,
             }
         )
     return JSONResponse({"rooms": out})
+
+
+@app.get("/api/admin/rooms/{room_id}/link")
+async def admin_room_link(room_id: str, request: Request, rotate: bool = False) -> JSONResponse:
+    _require_admin(request)
+    record = await _run_db(_db_get_room_sync, room_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="room not found")
+
+    join_key_plain = str(record.get("join_key_plain") or "").strip()
+    if rotate or not join_key_plain:
+        join_key_plain = _new_join_key()
+        join_key_hash = _sha256_hex(join_key_plain)
+        ok = await _run_db(_db_set_room_join_key_sync, room_id, join_key_plain, join_key_hash)
+        if not ok:
+            raise HTTPException(status_code=404, detail="room not found")
+        async with _rooms_lock:
+            room = _rooms.get(room_id)
+            if room:
+                room.join_key_hash = join_key_hash
+
+    base = str(request.base_url).rstrip("/")
+    join_path = f"/r/{room_id}?k={join_key_plain}"
+    return JSONResponse({"roomId": room_id, "joinPath": join_path, "joinUrl": f"{base}{join_path}"})
 
 
 @app.patch("/api/admin/rooms/{room_id}")
@@ -491,6 +558,13 @@ async def _require_room_join(room_id: str, join_key: str) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail="room not found")
     if not hmac.compare_digest(str(record["join_key_hash"]), _sha256_hex(join_key)):
         raise HTTPException(status_code=401, detail="unauthorized")
+    now = _now_ms()
+    new_expires_at = now + ROOM_TTL_MS
+    await _run_db(_db_bump_room_expiry_sync, room_id, new_expires_at)
+    async with _rooms_lock:
+        room = _rooms.get(room_id)
+        if room:
+            room.expires_at_ms = new_expires_at
     return record
 
 
@@ -608,13 +682,17 @@ async def ws_endpoint(ws: WebSocket) -> None:
     if not client_id:
         client_id = uuid.uuid4().hex
 
+    now = _now_ms()
     record = await _run_db(_db_get_room_sync, room_id)
-    if not record or _now_ms() >= int(record["expires_at_ms"]):
+    if not record or now >= int(record["expires_at_ms"]):
         await ws.close(code=4404)
         return
     if not hmac.compare_digest(str(record["join_key_hash"]), _sha256_hex(join_key)):
         await ws.close(code=4401)
         return
+
+    new_expires_at = now + ROOM_TTL_MS
+    await _run_db(_db_bump_room_expiry_sync, room_id, new_expires_at)
 
     history = await _run_db(_db_get_recent_messages_sync, room_id, 50)
     async with _rooms_lock:
@@ -625,9 +703,11 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 title=str(record.get("title") or "临时会话"),
                 join_key_hash=str(record["join_key_hash"]),
                 created_at_ms=int(record["created_at_ms"]),
-                expires_at_ms=int(record["expires_at_ms"]),
+                expires_at_ms=int(new_expires_at),
             )
             _rooms[room_id] = room
+        else:
+            room.expires_at_ms = int(new_expires_at)
         room.connections.add(ws)
 
     await _send_json(
@@ -685,6 +765,10 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 if not url.startswith(f"/u/{room_id}/"):
                     continue
 
+            now_ts = _now_ms()
+            new_expires_at = now_ts + ROOM_TTL_MS
+            await _run_db(_db_bump_room_expiry_sync, room_id, new_expires_at)
+
             message = {
                 "type": "message",
                 "kind": kind,
@@ -694,7 +778,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 "senderName": sender_name,
                 "content": content,
                 "url": url,
-                "ts": _now_ms(),
+                "ts": now_ts,
             }
             await _run_db(_db_insert_message_sync, message)
             async with _rooms_lock:
@@ -703,6 +787,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
                     await ws.close(code=4404)
                     return
                 room = current_room
+                room.expires_at_ms = int(new_expires_at)
 
             await _broadcast(room, message)
     except WebSocketDisconnect:

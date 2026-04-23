@@ -1044,6 +1044,7 @@
               const title = String(r.title || "临时会话");
               const online = Number(r.online || 0);
               const expired = !!r.expired;
+              const joinPath = r.joinPath ? String(r.joinPath) : "";
 
               const tdRoom = document.createElement("td");
               tdRoom.textContent = roomId;
@@ -1057,6 +1058,35 @@
               const tdAct = document.createElement("td");
               const act = document.createElement("div");
               act.className = "admin-actions";
+
+              const copyBtn = document.createElement("button");
+              copyBtn.className = "secondary";
+              copyBtn.textContent = joinPath ? "复制链接" : "生成链接";
+              copyBtn.onclick = async () => {
+                try {
+                  adminSetStatus(joinPath ? "复制中…" : "生成中…");
+                  let linkPath = joinPath;
+                  if (!linkPath) {
+                    const data = await adminFetch(`/api/admin/rooms/${encodeURIComponent(roomId)}/link?rotate=1`);
+                    linkPath = data && data.joinPath ? String(data.joinPath) : "";
+                    await refreshRooms();
+                  }
+                  const fullUrl = linkPath.startsWith("http") ? linkPath : `${window.location.origin}${linkPath}`;
+                  const ok = await copyText(fullUrl);
+                  if (ok) {
+                    adminSetStatus("已复制链接");
+                    return;
+                  }
+                  try {
+                    window.prompt("复制下面的链接（长按全选复制）", fullUrl);
+                    adminSetStatus("请长按复制链接");
+                  } catch {
+                    adminSetStatus("复制失败，请手动复制地址栏链接");
+                  }
+                } catch (e) {
+                  adminSetStatus(String(e && e.message ? e.message : "复制失败"));
+                }
+              };
 
               const renameBtn = document.createElement("button");
               renameBtn.className = "secondary";
@@ -1096,6 +1126,7 @@
                 }
               };
 
+              act.appendChild(copyBtn);
               act.appendChild(renameBtn);
               act.appendChild(delBtn);
               tdAct.appendChild(act);
