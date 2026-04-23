@@ -50,6 +50,43 @@
         border-radius: 12px;
         padding: 14px;
       }
+      .admin-table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      .admin-table th,
+      .admin-table td {
+        border-bottom: 1px solid var(--wx-border);
+        padding: 10px 8px;
+        text-align: left;
+        font-size: 14px;
+        vertical-align: top;
+      }
+      .admin-table th {
+        color: var(--wx-muted);
+        font-weight: 700;
+        font-size: 12px;
+      }
+      .admin-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .admin-actions button {
+        padding: 8px 10px;
+        font-size: 14px;
+        border-radius: 10px;
+      }
+      .admin-badge {
+        display: inline-block;
+        font-size: 12px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--wx-border);
+        color: var(--wx-muted);
+        margin-left: 6px;
+      }
       .row {
         display: flex;
         gap: 10px;
@@ -385,6 +422,20 @@
         <button id="createBtn">创建会话并进入</button>
       </div>
 
+      <div id="adminView" class="card hidden">
+        <h1>房间管理</h1>
+        <div class="muted">需要配置 ADMIN_TOKEN。输入后可列出房间、重命名、删除。</div>
+        <div style="height: 12px"></div>
+        <div class="row">
+          <input id="adminTokenBox" placeholder="ADMIN_TOKEN" />
+          <button id="adminRefreshBtn">刷新</button>
+        </div>
+        <div style="height: 10px"></div>
+        <div id="adminStatus" class="muted"></div>
+        <div style="height: 12px"></div>
+        <div id="adminRooms"></div>
+      </div>
+
       <div id="roomView" class="hidden">
         <div class="wx-app">
           <div class="wx-header">
@@ -455,6 +506,10 @@
         return m ? decodeURIComponent(m[1]) : null;
       }
 
+      function isAdminPath() {
+        return window.location.pathname === "/admin";
+      }
+
       async function createRoom(title) {
         const payload = { title: String(title || "").trim() };
         const hasTitle = payload.title.length > 0;
@@ -488,6 +543,9 @@
       let joinKey = null;
       let reconnectTimer = null;
       const myClientId = getOrCreateClientId();
+      let unreadCount = 0;
+      let titleBase = document.title || "临时聊天";
+      let canPlayAlert = false;
 
       function getOrCreateDisplayName() {
         const key = "tempchat_display_name";
@@ -506,6 +564,78 @@
 
       function setStatus(text) {
         el("statusLine").textContent = text;
+      }
+
+      function updateDocumentTitle() {
+        const base = titleBase || "临时聊天";
+        document.title = unreadCount > 0 ? `${base} (${unreadCount})` : base;
+      }
+
+      function resetUnread() {
+        unreadCount = 0;
+        updateDocumentTitle();
+      }
+
+      function enableAlertsOnUserGesture() {
+        canPlayAlert = true;
+        if ("Notification" in window && Notification.permission === "default") {
+          try {
+            Notification.requestPermission().catch(() => {});
+          } catch {}
+        }
+      }
+
+      function playAlertSound() {
+        if (!canPlayAlert) return;
+        try {
+          const AudioCtx = window.AudioContext || window.webkitAudioContext;
+          if (!AudioCtx) return;
+          const ctx = new AudioCtx();
+          const o = ctx.createOscillator();
+          const g = ctx.createGain();
+          o.type = "sine";
+          o.frequency.value = 880;
+          g.gain.value = 0.03;
+          o.connect(g);
+          g.connect(ctx.destination);
+          o.start();
+          setTimeout(() => {
+            try {
+              o.stop();
+              ctx.close();
+            } catch {}
+          }, 90);
+        } catch {}
+      }
+
+      function vibrateAlert() {
+        try {
+          if (navigator.vibrate) navigator.vibrate(60);
+        } catch {}
+      }
+
+      function notifyIncoming(msg) {
+        const inBackground = document.hidden || !document.hasFocus();
+        if (!inBackground) return;
+
+        unreadCount += 1;
+        updateDocumentTitle();
+        playAlertSound();
+        vibrateAlert();
+
+        try {
+          if ("Notification" in window && Notification.permission === "granted") {
+            const who = displayNameFor(msg);
+            const kind = String(msg.kind || "text").toLowerCase();
+            const body = kind === "image" ? "发来一张图片" : String(msg.content || "");
+            const n = new Notification(titleBase || "新消息", { body: `${who}：${body}` });
+            setTimeout(() => {
+              try {
+                n.close();
+              } catch {}
+            }, 4000);
+          }
+        } catch {}
       }
 
       async function copyText(text) {
@@ -620,6 +750,7 @@
         row.appendChild(bubbleWrap);
         el("messages").appendChild(row);
         scrollToBottom();
+        if (!isSelf) notifyIncoming(msg);
       }
 
       function addPresence(p) {
@@ -759,9 +890,18 @@
 
       async function initRoomView() {
         el("homeView").classList.add("hidden");
+        el("adminView").classList.add("hidden");
         el("roomView").classList.remove("hidden");
         el("roomIdLabel").textContent = roomId;
         el("roomTitle").textContent = "临时会话";
+        titleBase = "临时会话";
+        resetUnread();
+
+        window.addEventListener("focus", resetUnread);
+        document.addEventListener("visibilitychange", () => {
+          if (!document.hidden) resetUnread();
+        });
+        window.addEventListener("pointerdown", enableAlertsOnUserGesture, { once: true, capture: true });
 
         el("nameBox").value = getOrCreateDisplayName();
         el("nameBox").addEventListener("change", () => {
@@ -807,7 +947,11 @@
           if (res.ok) {
             const data = await res.json();
             el("onlineLabel").textContent = String(data.online ?? "-");
-            if (data.title) el("roomTitle").textContent = String(data.title);
+            if (data.title) {
+              el("roomTitle").textContent = String(data.title);
+              titleBase = String(data.title);
+              updateDocumentTitle();
+            }
           }
         } catch {}
 
@@ -818,7 +962,11 @@
             if (res.ok) {
               const data = await res.json();
               el("onlineLabel").textContent = String(data.online ?? "-");
-              if (data.title) el("roomTitle").textContent = String(data.title);
+              if (data.title) {
+                el("roomTitle").textContent = String(data.title);
+                titleBase = String(data.title);
+                updateDocumentTitle();
+              }
             }
           } catch {}
         }, 3000);
@@ -831,6 +979,153 @@
         window.addEventListener("keydown", (e) => {
           if (e.key === "Escape") closeImageViewer();
         });
+
+        if (isAdminPath()) {
+          el("homeView").classList.add("hidden");
+          el("roomView").classList.add("hidden");
+          el("adminView").classList.remove("hidden");
+          titleBase = "房间管理";
+          resetUnread();
+
+          const tokenKey = "tempchat_admin_token";
+          el("adminTokenBox").value = localStorage.getItem(tokenKey) || "";
+          el("adminTokenBox").addEventListener("change", () => {
+            const v = (el("adminTokenBox").value || "").trim();
+            localStorage.setItem(tokenKey, v);
+          });
+
+          const adminSetStatus = (t) => (el("adminStatus").textContent = String(t || ""));
+
+          const adminFetch = async (path, opts) => {
+            const token = (el("adminTokenBox").value || "").trim();
+            const headers = Object.assign({}, (opts && opts.headers) || {});
+            if (token) headers["x-admin-token"] = token;
+            let res = null;
+            try {
+              res = await fetch(path, Object.assign({}, opts || {}, { headers }));
+            } catch {
+              throw new Error("连接失败，请检查服务器是否可访问");
+            }
+            if (!res.ok) {
+              let detail = "";
+              try {
+                const j = await res.json();
+                detail = j && j.detail ? String(j.detail) : "";
+              } catch {
+                try {
+                  detail = (await res.text()) || "";
+                } catch {}
+              }
+              throw new Error(detail ? `操作失败：${detail}` : `操作失败：HTTP ${res.status}`);
+            }
+            return await res.json();
+          };
+
+          const renderRooms = (rooms) => {
+            const box = el("adminRooms");
+            box.innerHTML = "";
+            const list = Array.isArray(rooms) ? rooms : [];
+            if (list.length === 0) {
+              const empty = document.createElement("div");
+              empty.className = "muted";
+              empty.textContent = "暂无房间";
+              box.appendChild(empty);
+              return;
+            }
+            const table = document.createElement("table");
+            table.className = "admin-table";
+            const thead = document.createElement("thead");
+            thead.innerHTML = "<tr><th>房间</th><th>标题</th><th>状态</th><th>操作</th></tr>";
+            table.appendChild(thead);
+            const tbody = document.createElement("tbody");
+            for (const r of list) {
+              const tr = document.createElement("tr");
+              const roomId = String(r.roomId || "");
+              const title = String(r.title || "临时会话");
+              const online = Number(r.online || 0);
+              const expired = !!r.expired;
+
+              const tdRoom = document.createElement("td");
+              tdRoom.textContent = roomId;
+
+              const tdTitle = document.createElement("td");
+              tdTitle.textContent = title;
+
+              const tdState = document.createElement("td");
+              tdState.innerHTML = `在线 <b>${online}</b> ${expired ? '<span class="admin-badge">已过期</span>' : ""}`;
+
+              const tdAct = document.createElement("td");
+              const act = document.createElement("div");
+              act.className = "admin-actions";
+
+              const renameBtn = document.createElement("button");
+              renameBtn.className = "secondary";
+              renameBtn.textContent = "重命名";
+              renameBtn.onclick = async () => {
+                const v = window.prompt("新房间名", title);
+                if (v === null) return;
+                const newTitle = String(v || "").trim();
+                if (!newTitle) return;
+                try {
+                  adminSetStatus("重命名中…");
+                  await adminFetch(`/api/admin/rooms/${encodeURIComponent(roomId)}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ title: newTitle }),
+                  });
+                  await refreshRooms();
+                  adminSetStatus("已重命名");
+                } catch (e) {
+                  adminSetStatus(String(e && e.message ? e.message : "重命名失败"));
+                }
+              };
+
+              const delBtn = document.createElement("button");
+              delBtn.className = "danger";
+              delBtn.textContent = "删除";
+              delBtn.onclick = async () => {
+                const ok = window.confirm(`确认删除房间 ${roomId}？删除后无法恢复。`);
+                if (!ok) return;
+                try {
+                  adminSetStatus("删除中…");
+                  await adminFetch(`/api/admin/rooms/${encodeURIComponent(roomId)}`, { method: "DELETE" });
+                  await refreshRooms();
+                  adminSetStatus("已删除");
+                } catch (e) {
+                  adminSetStatus(String(e && e.message ? e.message : "删除失败"));
+                }
+              };
+
+              act.appendChild(renameBtn);
+              act.appendChild(delBtn);
+              tdAct.appendChild(act);
+
+              tr.appendChild(tdRoom);
+              tr.appendChild(tdTitle);
+              tr.appendChild(tdState);
+              tr.appendChild(tdAct);
+              tbody.appendChild(tr);
+            }
+            table.appendChild(tbody);
+            box.appendChild(table);
+          };
+
+          const refreshRooms = async () => {
+            try {
+              adminSetStatus("加载中…");
+              const data = await adminFetch("/api/admin/rooms");
+              renderRooms(data.rooms);
+              adminSetStatus(`已加载 ${Array.isArray(data.rooms) ? data.rooms.length : 0} 个房间`);
+            } catch (e) {
+              adminSetStatus(String(e && e.message ? e.message : "加载失败"));
+              renderRooms([]);
+            }
+          };
+
+          el("adminRefreshBtn").onclick = refreshRooms;
+          await refreshRooms();
+          return;
+        }
 
         el("createBtn").onclick = async () => {
           el("createBtn").disabled = true;

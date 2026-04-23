@@ -211,6 +211,28 @@ def _db_get_expired_room_ids_sync(now_ms: int) -> List[str]:
         conn.close()
 
 
+def _db_list_rooms_sync(limit: int) -> List[Dict[str, Any]]:
+    conn = _db_connect()
+    try:
+        rows = conn.execute(
+            "SELECT room_id, title, created_at_ms, expires_at_ms FROM rooms ORDER BY created_at_ms DESC LIMIT ?",
+            (int(limit),),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def _db_update_room_title_sync(room_id: str, title: str) -> bool:
+    conn = _db_connect()
+    try:
+        cur = conn.execute("UPDATE rooms SET title = ? WHERE room_id = ?", (title, room_id))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
 async def _cleanup_loop() -> None:
     while True:
         await asyncio.sleep(30)
@@ -280,6 +302,18 @@ async def room_page_head(room_id: str) -> Response:
     return Response(status_code=200)
 
 
+@app.get("/admin")
+async def admin_page() -> FileResponse:
+    if not _APP_HTML.exists():
+        raise HTTPException(status_code=500, detail="static/index.html not found")
+    return FileResponse(_APP_HTML)
+
+
+@app.head("/admin")
+async def admin_page_head() -> Response:
+    return Response(status_code=200)
+
+
 class CreateRoomBody(BaseModel):
     title: Optional[str] = None
 
@@ -328,6 +362,95 @@ async def create_room(request: Request, body: Optional[CreateRoomBody] = None) -
             "expiresAtMs": expires_at,
         }
     )
+
+
+def _admin_token() -> str:
+    return str(os.environ.get("ADMIN_TOKEN") or "").strip()
+
+
+def _require_admin(request: Request) -> None:
+    token = _admin_token()
+    if not token:
+        raise HTTPException(status_code=403, detail="admin disabled: missing ADMIN_TOKEN")
+    got = str(request.headers.get("x-admin-token") or "").strip()
+    if not got:
+        got = str(request.query_params.get("t") or "").strip()
+    if not got or not hmac.compare_digest(got, token):
+        raise HTTPException(status_code=403, detail="forbidden")
+
+
+async def _close_and_remove_room(room_id: str) -> None:
+    async with _rooms_lock:
+        room = _rooms.pop(room_id, None)
+    if room:
+        for ws in list(room.connections):
+            try:
+                await ws.close(code=4001)
+            except Exception:
+                pass
+    try:
+        shutil.rmtree(_UPLOAD_DIR / room_id, ignore_errors=True)
+    except Exception:
+        pass
+
+
+class AdminRenameBody(BaseModel):
+    title: str
+
+
+@app.get("/api/admin/rooms")
+async def admin_list_rooms(request: Request, limit: int = 200) -> JSONResponse:
+    _require_admin(request)
+    if limit <= 0:
+        limit = 200
+    if limit > 1000:
+        limit = 1000
+    rooms = await _run_db(_db_list_rooms_sync, limit)
+    now = _now_ms()
+    async with _rooms_lock:
+        online_map = {rid: len(r.connections) for rid, r in _rooms.items()}
+    out: List[Dict[str, Any]] = []
+    for r in rooms:
+        rid = str(r.get("room_id") or "")
+        expires = int(r.get("expires_at_ms") or 0)
+        out.append(
+            {
+                "roomId": rid,
+                "title": str(r.get("title") or "临时会话"),
+                "createdAtMs": int(r.get("created_at_ms") or 0),
+                "expiresAtMs": expires,
+                "expired": now >= expires if expires else False,
+                "online": int(online_map.get(rid) or 0),
+            }
+        )
+    return JSONResponse({"rooms": out})
+
+
+@app.patch("/api/admin/rooms/{room_id}")
+async def admin_rename_room(room_id: str, request: Request, body: AdminRenameBody) -> JSONResponse:
+    _require_admin(request)
+    title = str(body.title or "").strip() or "临时会话"
+    if len(title) > 30:
+        title = title[:30]
+    ok = await _run_db(_db_update_room_title_sync, room_id, title)
+    if not ok:
+        raise HTTPException(status_code=404, detail="room not found")
+    async with _rooms_lock:
+        room = _rooms.get(room_id)
+        if room:
+            room.title = title
+    return JSONResponse({"roomId": room_id, "title": title})
+
+
+@app.delete("/api/admin/rooms/{room_id}")
+async def admin_delete_room(room_id: str, request: Request) -> JSONResponse:
+    _require_admin(request)
+    record = await _run_db(_db_get_room_sync, room_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="room not found")
+    await _close_and_remove_room(room_id)
+    await _run_db(_db_delete_room_sync, room_id)
+    return JSONResponse({"roomId": room_id, "deleted": True})
 
 
 @app.get("/api/rooms/{room_id}")
