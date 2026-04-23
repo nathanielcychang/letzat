@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>临时聊天</title>
+    <title>安全聊天</title>
     <style>
       :root {
         color-scheme: light dark;
@@ -414,7 +414,7 @@
   <body>
     <div class="wrap">
       <div id="homeView" class="card">
-        <h1>临时聊天</h1>
+        <h1>安全聊天</h1>
         <div class="muted">不需要注册。创建会话后分享链接，打开即可加入。</div>
         <div style="height: 14px"></div>
         <input id="roomNameBox" placeholder="房间名（可选）" />
@@ -544,7 +544,7 @@
       let reconnectTimer = null;
       const myClientId = getOrCreateClientId();
       let unreadCount = 0;
-      let titleBase = document.title || "临时聊天";
+      let titleBase = document.title || "安全聊天";
       let canPlayAlert = false;
 
       function getOrCreateDisplayName() {
@@ -567,7 +567,7 @@
       }
 
       function updateDocumentTitle() {
-        const base = titleBase || "临时聊天";
+        const base = titleBase || "安全聊天";
         document.title = unreadCount > 0 ? `${base} (${unreadCount})` : base;
       }
 
